@@ -40,5 +40,7 @@ typedef struct Arguments
 
 void arg_parse( int argc, char* argv[], args* args);
 
+void map_resources();
+
 #endif
 

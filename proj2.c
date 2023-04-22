@@ -10,6 +10,11 @@
 #include "proj2.h"
 
 
+static int *customer_c = NULL, *worker_c = NULL, *process_c = NULL;
+
+sem_t *mutex, *init_C, *init_W, *barber, *customer, *customer_done, *barber_done;
+
+FILE *f;
 
 void arg_parse( int argcount, char *argval[] ,args *arguments)
 {
@@ -62,6 +67,35 @@ void arg_parse( int argcount, char *argval[] ,args *arguments)
 
 }
 
+void map_resources()
+{
+	customer_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	worker_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	process_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	if( customer_c == MAP_FAILED || worker_c == MAP_FAILED || process_c == MAP_FAILED )
+	{
+		fprintf(stderr, "One or more resources couldn't be mapped");
+		exit(1);
+	}
+
+	mutex = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	init_C = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	init_W = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	customer = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	barber = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	customer_done = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	barber_done = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+
+}
+
 
 int main( int argc, char *argv[] )
 {
@@ -69,6 +103,25 @@ int main( int argc, char *argv[] )
 	args arguments;
 
 	arg_parse( argc, argv, &arguments);
+
+	map_resources();
+
+	f = fopen( "proj2.out", "wb" );
+
+	if( f == NULL )
+	{
+		fprintf(stderr, "Couldn't open output file");
+		exit(1);
+	}
+
+	if( setvbuf( f, NULL, _IONBF, 0) != 0 )
+	{
+		fprintf(stderr, "Couldn't setup buffer for output file" );
+		exit(1);
+	}
+
+	
+
 
 
 }
