@@ -121,8 +121,16 @@ int main( int argc, char *argv[] )
 	}
 
 	
+	sem_init(mutex, 1,1);
+	sem_init(init_C, 1, 0);
+	sem_init(init_W, 1, 0);
+	sem_init(customer, 1, 0);
+	sem_init(barber, 1, 0);
+	sem_init(customer_done, 1,0);
+	sem_init(barber_done, 1, 0);
 
-
+	exit(0);
+   
 
 }
 
