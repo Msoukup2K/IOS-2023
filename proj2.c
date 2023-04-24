@@ -14,7 +14,7 @@ static int *customer_c = NULL, *worker_c = NULL, *process_c = NULL,
 			*first_queue = NULL, *second_queue = NULL, *third_queue = NULL,
 			*customers_done_c = NULL;
 
-sem_t *mutex, *init_C, *init_W, *barber, *customer, *customer_done, *barber_done,
+sem_t *mutex, *init_C, *init_W, *barber_sem, *customer_sem, *customer_done, *barber_done,
 	*writer;
 
 FILE *f;
@@ -94,9 +94,9 @@ void map_resources()
 
 	init_W = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-	customer = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	customer_sem = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-	barber = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	barber_sem = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
 	customer_done = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
@@ -108,7 +108,7 @@ void map_resources()
 void terminate()
 {
 	fclose(f);
-	if( sem_destroy( mutex ) == -1 || sem_destroy( customer ) || sem_destroy( barber ) )
+	if( sem_destroy( mutex ) == -1 || sem_destroy( customer_sem ) || sem_destroy( barber_sem ) )
 	{
 		fprintf(stderr, "Cannot destroy all semaphores");
 		exit(1);
@@ -117,10 +117,66 @@ void terminate()
 	munmap( mutex, sizeof(sem_t));
 	munmap( init_C, sizeof(sem_t));
 	munmap( init_W, sizeof(sem_t));
-	munmap( customer, sizeof(sem_t));
-	munmap( barber, sizeof(sem_t));
+	munmap( customer_sem, sizeof(sem_t));
+	munmap( barber_sem, sizeof(sem_t));
 	munmap( customer_done, sizeof(sem_t));
 	munmap( barber_done, sizeof(sem_t));
+
+}
+
+void customer_function( FILE *f, int customer_number, int TZ, int TU)
+{
+	//Přidat místo jednoho counteru tři různé pro tři různé řady podle rand <1,3>
+	
+	int c_time = ( random() % (TZ+1) );
+
+	usleep( c_time * 1000 );
+
+	sem_wait(writer);
+	fprintf(f, "%d:\t Z %d:\t entering office for a service X\n", ++(*process_c), customer_number);
+	sem_post(writer);
+
+	sem_wait(mutex);
+
+	(*customer_c)++;
+
+	sem_post(mutex);
+
+	sem_post(customer_sem);
+	sem_wait(barber_sem);
+
+	//obsluhování
+	sem_wait(writer);
+	fprintf(f, "%d:\t Z %d:\t called by office worker\n", ++(*process_c), customer_number);
+	sem_post(writer);
+
+	sem_post(customer_done);
+	sem_wait(barber_done);
+
+	sem_wait(mutex);
+	(*customer_c)--;
+	sem_post(mutex);
+	
+}
+
+void worker_function( FILE *f, int worker_number, int TI, int TB)
+{
+
+	//přišel
+	sem_wait(writer);
+	fprintf(f, "%d:\t U %d:\t serving service of type X\n", ++(*process_c), worker_number);
+	sem_post(writer);
+
+	if( *customer_c == 0 )
+	{
+
+	}
+	//Pokud aspoň jedna řada je neprázdná, jde obsloužit jednu řadu
+	sem_wait(customer_sem);
+	sem_wait(barber_sem);
+
+	sem_wait(customer_done);
+	sem_post(barber_done);
 
 }
 
@@ -166,8 +222,8 @@ int main( int argc, char *argv[] )
 	sem_init(mutex, 1,1);
 	sem_init(init_C, 1, 0);
 	sem_init(init_W, 1, 0);
-	sem_init(customer, 1, 0);
-	sem_init(barber, 1, 0);
+	sem_init(customer_sem, 1, 0);
+	sem_init(barber_sem, 1, 0);
 	sem_init(customer_done, 1,0);
 	sem_init(barber_done, 1, 0);
 
@@ -177,7 +233,7 @@ int main( int argc, char *argv[] )
 		{
 			if((customer_pids[i] = fork()) < 0)
 			{
-				fprintf(f, "Vytvoření procesu Zákazníka se nezdařilo");
+				fprintf(f, "Vytvoření procesu Zákazníka se nezdařilo\n");
 				arguments.NZ--;
 			}
 
@@ -233,12 +289,11 @@ int main( int argc, char *argv[] )
 		}
 	}
 
-	while(wait(NULL) > 0);
-
 	if( process_number != 0 )
 	{
 		while(1)
 		{
+			
 			if ( process_number < arguments.NZ + 1 )
 			{
 				customer_function(f, c_num, arguments.TZ, arguments.TU);
@@ -250,10 +305,19 @@ int main( int argc, char *argv[] )
 				worker_function(f , w_num, arguments.TZ, arguments.TU);
 				
 				fprintf(f, "%d:\t U :\t do funkce\n", ++(*process_c) );
+
 				exit(0);
 			}
 
 		}
+	}
+
+	if( process_number == 0 )
+	{
+		srand(time(NULL) / getpid());
+		int sleep_time = rand() % arguments.F + 1;
+		sleep(sleep_time);
+		fprintf(f, "Closed\n");
 	}
 
 	free(customer_pids);

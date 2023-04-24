@@ -40,6 +40,10 @@ typedef struct Arguments
 
 void arg_parse( int argc, char* argv[], args* args);
 
+void customer_function( FILE *f, int customer_number, int TZ, int TU);
+
+void worker_function( FILE *f, int worker_number, int TI, int TB);
+
 void map_resources();
 
 void terminate();
