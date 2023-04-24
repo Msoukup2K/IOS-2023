@@ -42,5 +42,7 @@ void arg_parse( int argc, char* argv[], args* args);
 
 void map_resources();
 
+void terminate();
+
 #endif
 
