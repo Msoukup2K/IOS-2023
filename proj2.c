@@ -12,29 +12,55 @@
 #define rand_service() ((rand() % 3) + 1)
 
 
-static int *customer_c = NULL, *worker_c = NULL, *process_c = NULL,
+static int  *process_c = NULL,
 			*first_queue = NULL, *second_queue = NULL, *third_queue = NULL,
 			*customers_done_c = NULL, *post_closed = NULL;
 
 sem_t *mutex, *init_C, *init_W, *barber_sem, *customer_sem, *customer_done, *barber_done,
-	*writer, *turnstile;
+	*writer, *first_queue_sem, *second_queue_sem, *third_queue_sem;
 
 FILE *f;
 
 void arg_parse( int argcount, char *argval[] ,args *arguments)
 {
+	char *error = NULL;
 	if( argcount != 6 )
 	{
 		fprintf(stderr, "Wrong number of arguments");
 		exit(1);
 	}
 
-	arguments->NZ = strtol(argval[1], NULL, 10);
-	arguments->NU = strtol(argval[2], NULL, 10);
-	arguments->TZ = strtol(argval[3], NULL, 10);
-	arguments->TU = strtol(argval[4], NULL, 10);
-	arguments->F = strtol(argval[5], NULL, 10);
 
+	arguments->NZ = strtol(argval[1],&error, 10);
+	if (*error != 0)
+	{
+		fprintf(stderr, "Wrong type of parameters.");
+		exit(1);
+	}
+	arguments->NU = strtol(argval[2],&error, 10);
+	if (*error != 0)
+	{
+		fprintf(stderr, "Wrong type of parameters.");
+		exit(1);
+	}
+	arguments->TZ = strtol(argval[3],&error, 10);
+	if (*error != 0)
+	{
+		fprintf(stderr, "Wrong type of parameters.");
+		exit(1);
+	}
+	arguments->TU = strtol(argval[4],&error, 10);
+	if (*error != 0)
+	{
+		fprintf(stderr, "Wrong type of parameters.");
+		exit(1);
+	}
+	arguments->F = strtol(argval[5],&error, 10);
+	if (*error != 0)
+	{
+		fprintf(stderr, "Wrong type of parameters.");
+		exit(1);
+	}
 	// Check if number of clients are not zero or less
 	if( arguments->NZ <= 0 )
 	{
@@ -75,14 +101,12 @@ void arg_parse( int argcount, char *argval[] ,args *arguments)
 void map_resources()
 {
 	post_closed = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	customer_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	worker_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	process_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	first_queue = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
 	second_queue = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
 	third_queue = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
 
-	if( customer_c == MAP_FAILED || worker_c == MAP_FAILED || process_c == MAP_FAILED ||
+	if( process_c == MAP_FAILED ||
 	 first_queue == MAP_FAILED || second_queue == MAP_FAILED || third_queue == MAP_FAILED 
 	 || customers_done_c == MAP_FAILED )
 	{
@@ -106,7 +130,6 @@ void map_resources()
 
 	writer = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-	turnstile = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 }
 
 void terminate()
@@ -130,28 +153,28 @@ void terminate()
 
 void customer_function( FILE *f, int customer_number, int TZ)
 {
+
 	//Přidat místo jednoho counteru tři různé pro tři různé řady podle rand <1,3>
 	int c_time = ( random() % (TZ+1) );
-	
 	usleep( c_time * 1000 );
-
-	sem_wait(mutex);
 
 	if( *post_closed == 1 )
 	{
-		sem_post(mutex);
-		exit(0);
+		return;
 	}
 
 	int service = rand_service();
 
 	sem_wait(writer);
-	fprintf(f, "%d:\t Z %d:\t entering office for a service %d\n", ++(*process_c), customer_number, service);
+	fprintf(f, "%d:\t Z %d:\tentering office for a service %d\n", ++(*process_c), customer_number, service);
 	sem_post(writer);
+
+	sem_wait(mutex);
 
 	if( service == 1 )
 	{
 		(*first_queue)++;
+
 	}
 	else if( service == 2 )
 	{
@@ -161,39 +184,22 @@ void customer_function( FILE *f, int customer_number, int TZ)
 	{
 		(*third_queue)++;
 	}
-	
-	sem_post(customer_sem);
-	
-	sem_wait(barber_sem);
+
 	sem_post(mutex);
 
-	sem_wait(turnstile);
+	// ceka se na zavolani urednikem
+	sem_post(customer_sem);
+	sem_wait(barber_sem);
+
 	//obsluhování
 	sem_wait(writer);
-	fprintf(f, "%d:\t Z %d:\t called by office worker\n", ++(*process_c), customer_number);
+	fprintf(f, "%d:\t Z %d:\tcalled by office worker\n", ++(*process_c), customer_number);
 	sem_post(writer);
 
 	usleep( (random() % (10+1)) * 1000 );
 
 	sem_post(customer_done);
 	sem_wait(barber_done);
-
-	sem_wait(mutex);
-
-	if( service == 1 )
-	{
-		(*first_queue)--;
-	}
-	else if( service == 2 )
-	{
-		(*second_queue)--;
-	} 
-	else
-	{
-		(*third_queue)--;
-	}
-
-	sem_post(mutex);
 
 	
 }
@@ -202,68 +208,100 @@ void worker_function( FILE *f, int worker_number, int TU)
 {
 	while(1)
 	{
-		sem_wait(mutex);
-		
-		fprintf(f,"Řada 1: %d\n", (*first_queue));
-		fprintf(f,"Řada 2: %d\n", (*second_queue));
-		fprintf(f,"Řada 3: %d\n", (*third_queue));
-		
-		int service = 0;
 		if( *first_queue > 0 )
 		{
 			int service = 1;
-		}
-		else if( *second_queue > 0 )
-		{
-			int service = 2;
-		}
-		else if( *second_queue > 0 )
-		{
-			int service = 3;
-		}
-		else if( *post_closed == 1 )
-		{
+
+			sem_wait(mutex);
+			(*first_queue)--;
 			sem_post(mutex);
-			break;
-		}
-
-		sem_post(mutex);
-
-		sem_wait(customer_sem);
-		sem_post(barber_sem);
-
-		if( service == 0 ) 
-		{
-
+			
 			sem_wait(writer);
-			fprintf(f, "%d:\t U %d:\t taking a break\n", ++(*process_c), worker_number);
+			fprintf(f, "%d:\t U %d:\tserving a service of type %d\n", ++(*process_c), worker_number, service);
 			sem_post(writer);
-			//sem_post(mutex);
 
-			usleep( (random() % (TU + 1)) * 1000 );
+			sem_wait(customer_sem);
+			sem_post(barber_sem);
 
-			//sem_wait(mutex);
-			sem_wait(writer);
-			fprintf(f, "%d:\t U %d:\t break finished\n", ++(*process_c), worker_number);
-			sem_post(writer);
-		}
-		else
-		{
-			sem_post(turnstile);
-			sem_wait(writer);
-			fprintf(f, "%d:\t U %d:\t serving service of type %d\n", ++(*process_c), worker_number, service);
-			sem_post(writer);
-			//sem_post(mutex);
 
 			usleep( (random() % (10+1)) * 1000 );
 
 			sem_wait(writer);
-            fprintf(f, "%d:\t U %d:\t service finished\n", ++(*process_c), worker_number);
+            fprintf(f, "%d:\t U %d:\tservice finished\n", ++(*process_c), worker_number);
             sem_post(writer);
 
+			sem_wait(customer_done);
+			sem_post(barber_done);
+
 		}
-		sem_wait(customer_done);
-		sem_post(barber_done);
+		else if( *second_queue > 0 )
+		{
+			int service = 2;
+
+			sem_wait(mutex);
+			(*second_queue)--;
+			sem_post(mutex);
+
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\tserving a service of type %d\n", ++(*process_c), worker_number, service);
+			sem_post(writer);
+
+			sem_wait(customer_sem);
+			sem_post(barber_sem);
+
+			usleep( (random() % (10+1)) * 1000 );
+
+			sem_wait(writer);
+            fprintf(f, "%d:\t U %d:\tservice finished\n", ++(*process_c), worker_number);
+            sem_post(writer);
+
+			sem_wait(customer_done);
+			sem_post(barber_done);
+		}
+		else if( *third_queue > 0 )
+		{
+			int service = 3;
+
+			sem_wait(mutex);
+			(*third_queue)--;
+			sem_post(mutex);
+
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\tserving a service of type %d\n", ++(*process_c), worker_number, service);
+			sem_post(writer);
+
+			sem_wait(customer_sem);
+			sem_post(barber_sem);
+
+			usleep( (random() % (10+1)) * 1000 );
+
+			sem_wait(writer);
+            fprintf(f, "%d:\t U %d:\tservice finished\n", ++(*process_c), worker_number);
+            sem_post(writer);
+
+			sem_wait(customer_done);
+			sem_post(barber_done);
+		}
+		else if( *post_closed == 1 )
+		{
+			sem_wait(writer);			
+			fprintf(f, "%d:\t U %d:\tgoing home\n", ++(*process_c), worker_number);
+			sem_post(writer);
+			exit(0);
+		}
+		else
+		{
+			sem_post(mutex);
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\ttaking break\n", ++(*process_c), worker_number);
+			sem_post(writer);
+
+			usleep( (random() % (TU + 1)) * 1000 );
+
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\tbreak finished\n", ++(*process_c), worker_number);
+			sem_post(writer);
+		}
 	}
 }
 
@@ -302,9 +340,6 @@ int main( int argc, char *argv[] )
 	int c_num = 0;
 	int w_num = 0;
 
-	(*customer_c) = arguments.NZ;
-	(*worker_c) = arguments.NU;
-
 	int process_number = 0;
 	
 	sem_init(mutex, 1,1);
@@ -315,7 +350,7 @@ int main( int argc, char *argv[] )
 	sem_init(customer_done, 1,0);
 	sem_init(barber_done, 1, 0);
 	sem_init(writer,1,2);
-	sem_init(turnstile,1,0);
+
 
 	if( process_number == 0 )
 	{
@@ -323,7 +358,7 @@ int main( int argc, char *argv[] )
 		{
 			if((customer_pids[i] = fork()) < 0)
 			{
-				fprintf(f, "Vytvoření procesu Zákazníka se nezdařilo\n");
+				fprintf(f, "%d:\tVytvoření procesu Zákazníka se nezdařilo\n", ++(*process_c));
 				arguments.NZ--;
 			}
 
@@ -334,7 +369,7 @@ int main( int argc, char *argv[] )
 
 				sem_wait(init_C);
 				sem_wait(writer);
-				fprintf(f, "%d:\t Z %d:\t started\n", ++(*process_c), c_num);
+				fprintf(f, "%d:\t Z %d:\tstarted\n", ++(*process_c), c_num);
 				sem_post(writer);
 				sem_post(init_C);
 
@@ -354,7 +389,7 @@ int main( int argc, char *argv[] )
 		{
 			if((worker_pids[i] = fork()) < 0)
 			{
-				fprintf(f, "Vytvoření procesu Úředníka se nezdařilo");
+				fprintf(f, "%d:\tVytvoření procesu Úředníka se nezdařilo\n", ++(*process_c));
 				arguments.NU--;
 			}
 
@@ -365,7 +400,7 @@ int main( int argc, char *argv[] )
 
 				sem_wait(init_W);
 				sem_wait(writer);
-				fprintf(f, "%d:\t U %d:\t started\n", ++(*process_c), w_num);
+				fprintf(f, "%d:\t U %d:\tstarted\n", ++(*process_c), w_num);
 				sem_post(writer);
 				sem_post(init_W);
 
@@ -381,7 +416,7 @@ int main( int argc, char *argv[] )
 
 	if( process_number == 0 )
 	{
-		srand(time(NULL) / getpid());
+		srand(time(NULL));
 		int sleep_time = random() % (arguments.F/2 + 1) + arguments.F/2;
 		usleep(sleep_time * 1000);
 		(*post_closed) = 1;
@@ -398,21 +433,17 @@ int main( int argc, char *argv[] )
 			if ( process_number < arguments.NZ + 1 )
 			{
 				customer_function(f, c_num, arguments.TZ);
+
 				sem_wait(writer);
-				fprintf(f, "%d:\t Z %d:\t going home\n", ++(*process_c), c_num);
+				fprintf(f, "%d:\t Z %d:\tgoing home\n", ++(*process_c), c_num);
 				sem_post(writer);
-				sem_post(mutex);
+
 				exit(0);
 			}
 			else if( process_number > arguments.NZ && process_number < arguments.NU + arguments.NZ + 1 )
 			{
 				
 				worker_function(f , w_num, arguments.TU);
-
-				sem_wait(writer);			
-				fprintf(f, "%d:\t U %d:\t going home\n", ++(*process_c), w_num);
-				sem_post(writer);
-				exit(0);
 			}
 
 		}
