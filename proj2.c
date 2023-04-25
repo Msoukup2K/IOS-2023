@@ -223,6 +223,7 @@ void worker_function( FILE *f, int worker_number, int TU)
 		}
 		else if( *post_closed == 1 )
 		{
+			sem_post(mutex);
 			break;
 		}
 
