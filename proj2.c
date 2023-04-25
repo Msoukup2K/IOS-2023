@@ -17,7 +17,7 @@ static int *customer_c = NULL, *worker_c = NULL, *process_c = NULL,
 			*customers_done_c = NULL, *post_closed = NULL;
 
 sem_t *mutex, *init_C, *init_W, *barber_sem, *customer_sem, *customer_done, *barber_done,
-	*writer;
+	*writer, *turnstile;
 
 FILE *f;
 
@@ -81,7 +81,6 @@ void map_resources()
 	first_queue = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
 	second_queue = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
 	third_queue = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
-	customers_done_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
 	if( customer_c == MAP_FAILED || worker_c == MAP_FAILED || process_c == MAP_FAILED ||
 	 first_queue == MAP_FAILED || second_queue == MAP_FAILED || third_queue == MAP_FAILED 
@@ -106,6 +105,8 @@ void map_resources()
 	barber_done = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
 	writer = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	turnstile = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 }
 
 void terminate()
@@ -134,9 +135,11 @@ void customer_function( FILE *f, int customer_number, int TZ)
 	
 	usleep( c_time * 1000 );
 
+	sem_wait(mutex);
+
 	if( *post_closed == 1 )
 	{
-		//sem_post(mutex);
+		sem_post(mutex);
 		exit(0);
 	}
 
@@ -145,8 +148,6 @@ void customer_function( FILE *f, int customer_number, int TZ)
 	sem_wait(writer);
 	fprintf(f, "%d:\t Z %d:\t entering office for a service %d\n", ++(*process_c), customer_number, service);
 	sem_post(writer);
-
-	sem_wait(mutex);
 
 	if( service == 1 )
 	{
@@ -161,11 +162,12 @@ void customer_function( FILE *f, int customer_number, int TZ)
 		(*third_queue)++;
 	}
 	
+	sem_post(customer_sem);
+	
+	sem_wait(barber_sem);
 	sem_post(mutex);
 
-	sem_post(customer_sem);
-	sem_wait(barber_sem);
-
+	sem_wait(turnstile);
 	//obsluhování
 	sem_wait(writer);
 	fprintf(f, "%d:\t Z %d:\t called by office worker\n", ++(*process_c), customer_number);
@@ -198,10 +200,14 @@ void customer_function( FILE *f, int customer_number, int TZ)
 
 void worker_function( FILE *f, int worker_number, int TU)
 {
-	
 	while(1)
 	{
-
+		sem_wait(mutex);
+		
+		fprintf(f,"Řada 1: %d\n", (*first_queue));
+		fprintf(f,"Řada 2: %d\n", (*second_queue));
+		fprintf(f,"Řada 3: %d\n", (*third_queue));
+		
 		int service = 0;
 		if( *first_queue > 0 )
 		{
@@ -220,6 +226,8 @@ void worker_function( FILE *f, int worker_number, int TU)
 			break;
 		}
 
+		sem_post(mutex);
+
 		sem_wait(customer_sem);
 		sem_post(barber_sem);
 
@@ -229,27 +237,32 @@ void worker_function( FILE *f, int worker_number, int TU)
 			sem_wait(writer);
 			fprintf(f, "%d:\t U %d:\t taking a break\n", ++(*process_c), worker_number);
 			sem_post(writer);
+			//sem_post(mutex);
 
 			usleep( (random() % (TU + 1)) * 1000 );
 
+			//sem_wait(mutex);
 			sem_wait(writer);
 			fprintf(f, "%d:\t U %d:\t break finished\n", ++(*process_c), worker_number);
 			sem_post(writer);
-
 		}
 		else
 		{
+			sem_post(turnstile);
 			sem_wait(writer);
 			fprintf(f, "%d:\t U %d:\t serving service of type %d\n", ++(*process_c), worker_number, service);
 			sem_post(writer);
+			//sem_post(mutex);
 
 			usleep( (random() % (10+1)) * 1000 );
 
-		}
+			sem_wait(writer);
+            fprintf(f, "%d:\t U %d:\t service finished\n", ++(*process_c), worker_number);
+            sem_post(writer);
 
+		}
 		sem_wait(customer_done);
 		sem_post(barber_done);
-
 	}
 }
 
@@ -301,6 +314,7 @@ int main( int argc, char *argv[] )
 	sem_init(customer_done, 1,0);
 	sem_init(barber_done, 1, 0);
 	sem_init(writer,1,2);
+	sem_init(turnstile,1,0);
 
 	if( process_number == 0 )
 	{
