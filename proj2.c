@@ -9,10 +9,12 @@
  */
 #include "proj2.h"
 
+#define rand_service() ((rand() % 3) + 1)
+
 
 static int *customer_c = NULL, *worker_c = NULL, *process_c = NULL,
 			*first_queue = NULL, *second_queue = NULL, *third_queue = NULL,
-			*customers_done_c = NULL;
+			*customers_done_c = NULL, *post_closed = NULL;
 
 sem_t *mutex, *init_C, *init_W, *barber_sem, *customer_sem, *customer_done, *barber_done,
 	*writer;
@@ -72,6 +74,7 @@ void arg_parse( int argcount, char *argval[] ,args *arguments)
 
 void map_resources()
 {
+	post_closed = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	customer_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	worker_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	process_c = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -124,22 +127,40 @@ void terminate()
 
 }
 
-void customer_function( FILE *f, int customer_number, int TZ, int TU)
+void customer_function( FILE *f, int customer_number, int TZ)
 {
 	//Přidat místo jednoho counteru tři různé pro tři různé řady podle rand <1,3>
-	
 	int c_time = ( random() % (TZ+1) );
-
+	
 	usleep( c_time * 1000 );
 
+	if( *post_closed == 1 )
+	{
+		//sem_post(mutex);
+		exit(0);
+	}
+
+	int service = rand_service();
+
 	sem_wait(writer);
-	fprintf(f, "%d:\t Z %d:\t entering office for a service X\n", ++(*process_c), customer_number);
+	fprintf(f, "%d:\t Z %d:\t entering office for a service %d\n", ++(*process_c), customer_number, service);
 	sem_post(writer);
 
 	sem_wait(mutex);
 
-	(*customer_c)++;
-
+	if( service == 1 )
+	{
+		(*first_queue)++;
+	}
+	else if( service == 2 )
+	{
+		(*second_queue)++;
+	} 
+	else
+	{
+		(*third_queue)++;
+	}
+	
 	sem_post(mutex);
 
 	sem_post(customer_sem);
@@ -150,34 +171,86 @@ void customer_function( FILE *f, int customer_number, int TZ, int TU)
 	fprintf(f, "%d:\t Z %d:\t called by office worker\n", ++(*process_c), customer_number);
 	sem_post(writer);
 
+	usleep( (random() % (10+1)) * 1000 );
+
 	sem_post(customer_done);
 	sem_wait(barber_done);
 
 	sem_wait(mutex);
-	(*customer_c)--;
+
+	if( service == 1 )
+	{
+		(*first_queue)--;
+	}
+	else if( service == 2 )
+	{
+		(*second_queue)--;
+	} 
+	else
+	{
+		(*third_queue)--;
+	}
+
 	sem_post(mutex);
+
 	
 }
 
-void worker_function( FILE *f, int worker_number, int TI, int TB)
+void worker_function( FILE *f, int worker_number, int TU)
 {
-
-	//přišel
-	sem_wait(writer);
-	fprintf(f, "%d:\t U %d:\t serving service of type X\n", ++(*process_c), worker_number);
-	sem_post(writer);
-
-	if( *customer_c == 0 )
+	
+	while(1)
 	{
 
+		int service = 0;
+		if( *first_queue > 0 )
+		{
+			int service = 1;
+		}
+		else if( *second_queue > 0 )
+		{
+			int service = 2;
+		}
+		else if( *second_queue > 0 )
+		{
+			int service = 3;
+		}
+		else if( *post_closed == 1 )
+		{
+			break;
+		}
+
+		sem_wait(customer_sem);
+		sem_post(barber_sem);
+
+		if( service == 0 ) 
+		{
+
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\t taking a break\n", ++(*process_c), worker_number);
+			sem_post(writer);
+
+			usleep( (random() % (TU + 1)) * 1000 );
+
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\t break finished\n", ++(*process_c), worker_number);
+			sem_post(writer);
+
+		}
+		else
+		{
+			sem_wait(writer);
+			fprintf(f, "%d:\t U %d:\t serving service of type %d\n", ++(*process_c), worker_number, service);
+			sem_post(writer);
+
+			usleep( (random() % (10+1)) * 1000 );
+
+		}
+
+		sem_wait(customer_done);
+		sem_post(barber_done);
+
 	}
-	//Pokud aspoň jedna řada je neprázdná, jde obsloužit jednu řadu
-	sem_wait(customer_sem);
-	sem_wait(barber_sem);
-
-	sem_wait(customer_done);
-	sem_post(barber_done);
-
 }
 
 
@@ -214,18 +287,20 @@ int main( int argc, char *argv[] )
 
 	int c_num = 0;
 	int w_num = 0;
+
 	(*customer_c) = arguments.NZ;
 	(*worker_c) = arguments.NU;
 
 	int process_number = 0;
 	
 	sem_init(mutex, 1,1);
-	sem_init(init_C, 1, 0);
-	sem_init(init_W, 1, 0);
+	sem_init(init_C, 1, 1);
+	sem_init(init_W, 1, 1);
 	sem_init(customer_sem, 1, 0);
 	sem_init(barber_sem, 1, 0);
 	sem_init(customer_done, 1,0);
 	sem_init(barber_done, 1, 0);
+	sem_init(writer,1,2);
 
 	if( process_number == 0 )
 	{
@@ -244,7 +319,7 @@ int main( int argc, char *argv[] )
 
 				sem_wait(init_C);
 				sem_wait(writer);
-				fprintf(f, "%d:\t Z %d:\t started\n", ++(*process_c), i+1);
+				fprintf(f, "%d:\t Z %d:\t started\n", ++(*process_c), c_num);
 				sem_post(writer);
 				sem_post(init_C);
 
@@ -275,7 +350,7 @@ int main( int argc, char *argv[] )
 
 				sem_wait(init_W);
 				sem_wait(writer);
-				fprintf(f, "%d:\t U %d:\t started\n", ++(*process_c), i+1);
+				fprintf(f, "%d:\t U %d:\t started\n", ++(*process_c), w_num);
 				sem_post(writer);
 				sem_post(init_W);
 
@@ -289,6 +364,17 @@ int main( int argc, char *argv[] )
 		}
 	}
 
+	if( process_number == 0 )
+	{
+		srand(time(NULL) / getpid());
+		int sleep_time = random() % (arguments.F/2 + 1) + arguments.F/2;
+		usleep(sleep_time * 1000);
+		(*post_closed) = 1;
+		fprintf(f, "%d:\t closing\n", ++(*process_c));
+	}
+
+	while( wait(NULL) > -1);
+
 	if( process_number != 0 )
 	{
 		while(1)
@@ -296,28 +382,25 @@ int main( int argc, char *argv[] )
 			
 			if ( process_number < arguments.NZ + 1 )
 			{
-				customer_function(f, c_num, arguments.TZ, arguments.TU);
-
+				customer_function(f, c_num, arguments.TZ);
+				sem_wait(writer);
+				fprintf(f, "%d:\t Z %d:\t going home\n", ++(*process_c), c_num);
+				sem_post(writer);
+				sem_post(mutex);
 				exit(0);
 			}
 			else if( process_number > arguments.NZ && process_number < arguments.NU + arguments.NZ + 1 )
 			{
-				worker_function(f , w_num, arguments.TZ, arguments.TU);
 				
-				fprintf(f, "%d:\t U :\t do funkce\n", ++(*process_c) );
+				worker_function(f , w_num, arguments.TU);
 
+				sem_wait(writer);			
+				fprintf(f, "%d:\t U %d:\t going home\n", ++(*process_c), w_num);
+				sem_post(writer);
 				exit(0);
 			}
 
 		}
-	}
-
-	if( process_number == 0 )
-	{
-		srand(time(NULL) / getpid());
-		int sleep_time = rand() % arguments.F + 1;
-		sleep(sleep_time);
-		fprintf(f, "Closed\n");
 	}
 
 	free(customer_pids);
@@ -325,7 +408,3 @@ int main( int argc, char *argv[] )
 	terminate();
 	return 0;
 }
-
-
-
-
