@@ -1,8 +1,11 @@
 CC=gcc
-CFFLAGS=-std=gnu99 -Wall -Wextra -Werror -pedantic -pthread -lrt
-RM=rm -f
+CFFLAGS=-std=gnu99 -Wall -Wextra -Werror -pedantic -pthread
+binaries= proj2 proj2.out
 
-proj2 : proj2.c
+.PHONY: clean all
+
+all : proj2.c
 		$(CC) $(CFFLAGS) proj2.c -o proj2
 	
-clean : $(RM) *.o proj2
+clean :  proj2
+		rm -f $(binaries) *.o
